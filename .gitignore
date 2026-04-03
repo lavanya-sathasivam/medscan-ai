@@ -1,0 +1,38 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+medenv/
+.venv/
+venv/
+env/
+
+# Build and tooling artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Streamlit and local app state
+.streamlit/secrets.toml
+
+# Databases and runtime outputs
+database/database.db
+scan_history.db
+*.sqlite3
+
+# Model and large local assets
+*.pth
+*.pt
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
