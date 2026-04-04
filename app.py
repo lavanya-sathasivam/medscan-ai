@@ -15,7 +15,8 @@ import torch
 from database.db import fetch_scans, init_db, save_scan
 from models.model_loader import load_model
 from models.predict import predict_image
-from utils.gradcam import GradCAM
+from utils.gradcam import GradCAMPlusPlus
+from utils.processing import DatasetSplitConfig, split_dataset
 from utils.preprocess import preprocess_image
 from utils.triage import get_triage
 
@@ -423,18 +424,42 @@ def build_probability_chart(probabilities: np.ndarray) -> alt.Chart:
     )
 
 
-def create_gradcam_overlay(model: torch.nn.Module, input_tensor: torch.Tensor, image: np.ndarray) -> np.ndarray:
-    gradcam = GradCAM(model, model.layer4)
+def create_gradcam_overlay(model, input_tensor, image):
+    # Select correct layer
+    if hasattr(model, "layer4"):
+        target_layer = model.layer4[-1]
+    elif hasattr(model, "features"):
+        target_layer = model.features[-1]
+    else:
+        raise ValueError("Unsupported model")
+
+    gradcam = GradCAMPlusPlus(model, target_layer)
+
     try:
         heatmap = gradcam.generate(input_tensor)
-        colored = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)
-        colored = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
-        resized_image = cv2.resize(image, (224, 224))
-        overlay = (0.42 * colored + 0.58 * resized_image).clip(0, 255).astype(np.uint8)
+
+        # 🔥 Keep only strong regions
+        heatmap = np.clip(heatmap, 0.5, 1)
+        heatmap = (heatmap - heatmap.min()) / (heatmap.max() + 1e-8)
+
+        heatmap = cv2.resize(heatmap, (image.shape[1], image.shape[0]))
+
+        # Ensure image format
+        if image.max() <= 1.0:
+            image = image * 255
+        image = image.astype(np.uint8)
+
+        # 🔥 Create RED mask manually (NO JET)
+        red_mask = np.zeros_like(image)
+        red_mask[:, :, 0] = (heatmap * 255).astype(np.uint8)  # Red channel only
+
+        # 🔥 Blend (strong red highlight)
+        overlay = cv2.addWeighted(image, 0.7, red_mask, 0.6, 0)
+
         return overlay
+
     finally:
         gradcam.close()
-
 
 def analyze_scan(
     model: torch.nn.Module,
