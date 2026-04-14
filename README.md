@@ -1,10 +1,10 @@
 # MedScan-AI
 
-MedScan-AI is a Streamlit-based clinical decision support prototype for CT brain scan triage. The app loads a locally supplied ResNet18 hemorrhage classifier, analyzes an uploaded scan, presents the predicted class with confidence and Grad-CAM attention, and stores scan events in a local SQLite history.
+MedScan-AI is a Streamlit-based clinical decision support prototype for CT brain scan triage. The app loads a locally supplied hemorrhage classifier, analyzes an uploaded scan, presents clinician-oriented triage and confidence outputs with Grad-CAM attention, and stores scan events in a local SQLite history.
 
 ## Features
 
-- Professional dashboard-style Streamlit interface for patient intake and scan review
+- Clinician-first Streamlit dashboard for patient intake, scan review, and scan-event history
 - AI-assisted hemorrhage vs normal classification
 - Confidence scoring with triage labels
 - Grad-CAM attention overlay for visual explanation
@@ -25,9 +25,14 @@ MedScan-AI/
 |   |-- db.py
 |   `-- database.db            # generated locally when the app runs
 |-- models/
+|   |-- best_model.pth         # canonical runtime model path used by the app
 |   |-- __init__.py
 |   |-- model_loader.py
 |   `-- predict.py
+|-- ui/
+|   |-- sections.py
+|   |-- state.py
+|   `-- theme.py
 `-- utils/
     |-- __init__.py
     |-- gradcam.py
@@ -39,7 +44,7 @@ MedScan-AI/
 ## Requirements
 
 - Python 3.10 or newer
-- A local trained weights file named `hemorrhage_model.pth` placed in the project root
+- A local trained weights file available at `models/best_model.pth`
 
 ## Setup
 
@@ -53,7 +58,7 @@ pip install -r requirements.txt
 3. Ensure the model file is available at:
 
 ```text
-./hemorrhage_model.pth
+./models/best_model.pth
 ```
 
 ## Run the App
@@ -73,11 +78,13 @@ Then open the local Streamlit URL shown in the terminal.
    - confidence score
    - triage label
    - Grad-CAM attention overlay
-4. Review stored scan history for the active patient.
+4. Review the triage-first results layout, Grad-CAM overlay, and probability chart.
+5. Review stored scan history for the active patient.
 
 ## Notes
 
 - The model output is a supportive signal only and should not replace clinical judgment.
+- Patient workspaces in the UI are session-scoped. Persisted storage currently covers scan events, not a full patient registry.
 - Local artifacts such as virtual environments, databases, caches, and model weights are intentionally excluded from git tracking through `.gitignore`.
 - `utils/processing.py` is now a reusable dataset-splitting helper rather than a hard-coded machine-specific script.
 

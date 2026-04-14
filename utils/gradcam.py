@@ -1,11 +1,21 @@
 import torch
 import numpy as np
 import cv2
+from importlib import import_module
+
+GradCAM = None
+show_cam_on_image = None
+try:
+    GradCAM = import_module("pytorch_grad_cam").GradCAM
+    show_cam_on_image = import_module("pytorch_grad_cam.utils.image").show_cam_on_image
+except Exception:  # pragma: no cover - optional runtime dependency
+    GradCAM = None
+    show_cam_on_image = None
 
 
 class GradCAMPlusPlus:
     """
-    Grad-CAM++ implementation for better localization (especially medical images)
+    Stable Grad-CAM++ for medical imaging
     """
 
     def __init__(self, model, target_layer):
@@ -17,9 +27,9 @@ class GradCAMPlusPlus:
         self.gradients = None
         self.activations = None
 
-        # Register hooks
-        self.forward_handle = self.target_layer.register_forward_hook(self._forward_hook)
-        self.backward_handle = self.target_layer.register_full_backward_hook(self._backward_hook)
+        # Hooks
+        self.forward_handle = target_layer.register_forward_hook(self._forward_hook)
+        self.backward_handle = target_layer.register_full_backward_hook(self._backward_hook)
 
     def _forward_hook(self, module, input, output):
         self.activations = output.detach()
@@ -28,10 +38,6 @@ class GradCAMPlusPlus:
         self.gradients = grad_output[0].detach()
 
     def generate(self, input_tensor, class_idx=None):
-        """
-        Generates Grad-CAM++ heatmap
-        """
-
         self.model.zero_grad()
 
         output = self.model(input_tensor)
@@ -43,12 +49,12 @@ class GradCAMPlusPlus:
         target.backward()
 
         if self.gradients is None or self.activations is None:
-            raise RuntimeError("Grad-CAM failed: gradients or activations not found")
+            raise RuntimeError("Grad-CAM failed")
 
-        gradients = self.gradients[0]        # [C, H, W]
-        activations = self.activations[0]    # [C, H, W]
+        gradients = self.gradients[0]        # [C,H,W]
+        activations = self.activations[0]    # [C,H,W]
 
-        # Grad-CAM++ calculations
+        # Grad-CAM++
         grad_2 = gradients ** 2
         grad_3 = gradients ** 3
 
@@ -60,7 +66,6 @@ class GradCAMPlusPlus:
         positive_gradients = torch.relu(gradients)
         weights = torch.sum(alpha * positive_gradients, dim=(1, 2))
 
-        # Weighted combination
         cam = torch.zeros(activations.shape[1:], dtype=torch.float32)
 
         for i, w in enumerate(weights):
@@ -68,42 +73,75 @@ class GradCAMPlusPlus:
 
         cam = torch.relu(cam)
 
-        # Normalize
+        # ✅ Normalize safely
         cam -= cam.min()
         cam /= (cam.max() + 1e-8)
 
-        cam = cam.cpu().numpy()
-
-        return cam
-
-    def overlay(self, image, cam):
-        """
-        Overlay heatmap on image
-        image: RGB image (numpy array, 224x224)
-        cam: heatmap (0–1)
-        """
-
-        # Resize CAM to image size
-        cam = cv2.resize(cam, (image.shape[1], image.shape[0]))
-
-        # Ensure image is in correct range
-        if image.max() <= 1.0:
-            image = image * 255
-
-        image = image.astype(np.uint8)
-
-        # Create heatmap
-        heatmap = cv2.applyColorMap(np.uint8(cam * 255), cv2.COLORMAP_JET)
-        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-
-        # Blend image and heatmap
-        overlay = cv2.addWeighted(image, 0.7, heatmap, 0.5, 0)
-
-        return overlay
+        return cam.cpu().numpy()
 
     def close(self):
-        """
-        Remove hooks (important for avoiding memory leaks)
-        """
         self.forward_handle.remove()
         self.backward_handle.remove()
+
+
+# 🔥 MAIN FUNCTION
+def _select_target_layer(model):
+    # Match your Colab setup for ResNet-style models first.
+    if hasattr(model, "layer3"):
+        return model.layer3[-1]
+    if hasattr(model, "layer4"):
+        return model.layer4[-1]
+    if hasattr(model, "features"):
+        return model.features[-1]
+    raise ValueError("Unsupported model architecture for Grad-CAM")
+
+
+def _normalize_heatmap(heatmap: np.ndarray, image_shape: tuple[int, int]) -> np.ndarray:
+    heatmap = np.maximum(heatmap, 0)
+    if float(heatmap.max()) > 0:
+        heatmap = heatmap / float(heatmap.max())
+    heatmap = np.power(heatmap, 2.2)
+    heatmap = cv2.GaussianBlur(heatmap, (15, 15), 0)
+    heatmap = cv2.resize(heatmap, (image_shape[1], image_shape[0]))
+    heatmap[heatmap < 0.25] = 0
+    return heatmap
+
+
+def _to_uint8_rgb(image: np.ndarray) -> np.ndarray:
+    if image.max() <= 1.0:
+        image = image * 255.0
+    return np.clip(image, 0, 255).astype(np.uint8)
+
+
+def generate_gradcam_overlay(model, input_tensor, image):
+    """Return Grad-CAM visualization using the same flow as the Colab code."""
+
+    if hasattr(model, "layer3"):
+        target_layer = model.layer3[-1]
+    else:
+        target_layer = _select_target_layer(model)
+
+    if GradCAM is not None:
+        with GradCAM(model=model, target_layers=[target_layer]) as cam:
+            grayscale_cam = cam(input_tensor=input_tensor)[0]
+    else:
+        gradcam = GradCAMPlusPlus(model, target_layer)
+        try:
+            grayscale_cam = gradcam.generate(input_tensor)
+        finally:
+            gradcam.close()
+
+    rgb_image = _to_uint8_rgb(image)
+    rgb_224 = cv2.resize(rgb_image, (224, 224))
+    rgb_float = np.float32(rgb_224) / 255.0
+
+    if show_cam_on_image is not None:
+        visualization = show_cam_on_image(rgb_float, grayscale_cam, use_rgb=True)
+    else:
+        heatmap = _normalize_heatmap(grayscale_cam, rgb_224.shape)
+        heatmap_uint8 = np.uint8(255 * heatmap)
+        heatmap_bgr = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+        heatmap_rgb = cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
+        visualization = cv2.addWeighted(rgb_224, 0.5, heatmap_rgb, 0.5, 0)
+
+    return cv2.resize(visualization, (rgb_image.shape[1], rgb_image.shape[0]))

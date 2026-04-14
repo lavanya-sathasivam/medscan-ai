@@ -11,6 +11,7 @@ def predict_image(model: torch.nn.Module, input_tensor: torch.Tensor) -> tuple[s
         outputs = model(input_tensor)
         probabilities = torch.softmax(outputs, dim=1)
 
+    class_names = tuple(getattr(model, "class_names", CLASS_NAMES))
     predicted_index = int(torch.argmax(probabilities, dim=1).item())
     confidence = float(probabilities[0, predicted_index].item())
-    return CLASS_NAMES[predicted_index], confidence, probabilities[0].cpu().numpy()
+    return class_names[predicted_index], confidence, probabilities[0].cpu().numpy()
